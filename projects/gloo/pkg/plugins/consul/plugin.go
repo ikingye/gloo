@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	"github.com/hashicorp/consul/api"
 	"github.com/rotisserie/eris"
 
@@ -13,23 +14,34 @@ import (
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul"
 
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
 )
 
 var _ discovery.DiscoveryPlugin = new(plugin)
+var _ plugins.UpstreamPlugin = new(plugin)
+var _ plugins.RouteActionPlugin = new(plugin)
 
 var (
 	DefaultDnsAddress         = "127.0.0.1:8600"
 	DefaultDnsPollingInterval = 5 * time.Second
+	DefaultTlsTagName         = "glooUseTls"
+
+	UnformattedErrorMsg = "Consul settings specify automatic detection of TLS services, " +
+		"but the rootCA resource's name/namespace are not properly specified: {%s}"
+	ConsulTlsInputError = func(nsString string) error {
+		return eris.Errorf(UnformattedErrorMsg, nsString)
+	}
 )
 
 type plugin struct {
-	client             consul.ConsulWatcher
-	resolver           DnsResolver
-	dnsPollingInterval time.Duration
+	client                          consul.ConsulWatcher
+	resolver                        DnsResolver
+	dnsPollingInterval              time.Duration
+	consulUpstreamDiscoverySettings *v1.Settings_ConsulUpstreamDiscoveryConfiguration
+	settings                        *v1.Settings
+	previousDnsResolutions          map[string][]string
 }
 
 func (p *plugin) Resolve(u *v1.Upstream) (*url.URL, error) {
@@ -56,8 +68,25 @@ func (p *plugin) Resolve(u *v1.Upstream) (*url.URL, error) {
 		scheme = "https"
 	}
 
+	// Match service instances (consul endpoints) to gloo upstreams. A match is found if the upstream's
+	// InstanceTags array is a subset of the serviceInstance's tags, or always if InstanceTags is empty.
+	// If the upstream's instanceBlackListTags array is non-empty, then there must also be no matches between
+	// this and the service instances tags.
+	//
+	// There's no coordination between upstreams when matching. This makes it a little awkward to sort
+	// consul serviceInstance's among upstreams if we have any upstream with an empty InstanceTags array,
+	// since that will also auto-match with serviceInstances that had matching tags for another upstream.
+	//
+	// The resulting implication is:
+	// If there are multiple upstreams associated with the same consul service, each upstream MUST have a non-empty
+	// InstanceTags array, and that service's serviceInstances MUST have enough tags to match them to at least one
+	// service. If a serviceInstance has the tags to match into multiple upstreams, then it'll be associated with
+	// multiple upstreams. This isn't always bad par se, but is not ideal when only some upstreams are secure.
 	for _, inst := range instances {
-		if (len(spec.InstanceTags) == 0) || matchTags(spec.InstanceTags, inst.ServiceTags) {
+		instanceMatch := len(spec.InstanceTags) == 0 || matchTags(spec.InstanceTags, inst.ServiceTags)
+		antiInstanceMatch := len(spec.InstanceBlacklistTags) == 0 || mutuallyExclusiveTags(spec.InstanceBlacklistTags, inst.ServiceTags)
+
+		if instanceMatch && antiInstanceMatch {
 			ipAddresses, err := getIpAddresses(context.TODO(), inst.ServiceAddress, p.resolver)
 			if err != nil {
 				return nil, err
@@ -79,27 +108,48 @@ func NewPlugin(client consul.ConsulWatcher, resolver DnsResolver, dnsPollingInte
 	if dnsPollingInterval != nil {
 		pollingInterval = *dnsPollingInterval
 	}
-	return &plugin{client: client, resolver: resolver, dnsPollingInterval: pollingInterval}
+	previousDnsResolutions := make(map[string][]string)
+	return &plugin{client: client, resolver: resolver, dnsPollingInterval: pollingInterval, previousDnsResolutions: previousDnsResolutions}
 }
 
 func (p *plugin) Init(params plugins.InitParams) error {
+	p.settings = params.Settings
+	p.consulUpstreamDiscoverySettings = params.Settings.ConsulDiscovery
+	if p.consulUpstreamDiscoverySettings == nil {
+		p.consulUpstreamDiscoverySettings = &v1.Settings_ConsulUpstreamDiscoveryConfiguration{UseTlsTagging: false}
+	}
+	// if automatic TLS discovery is enabled for consul services, make sure we have a specified tag
+	// and a resource location for the validation context's root CA.
+	// The tag has a default value, but the resource name/namespace must be set manually.
+	if p.consulUpstreamDiscoverySettings.UseTlsTagging {
+		rootCa := p.consulUpstreamDiscoverySettings.GetRootCa()
+		if rootCa.GetNamespace() == "" || rootCa.GetName() == "" {
+			return ConsulTlsInputError(rootCa.String())
+		}
+
+		tlsTagName := p.consulUpstreamDiscoverySettings.GetTlsTagName()
+		if tlsTagName == "" {
+			p.consulUpstreamDiscoverySettings.TlsTagName = DefaultTlsTagName
+		}
+	}
 	return nil
 }
 
-func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoyapi.Cluster) error {
+func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
 	_, ok := in.UpstreamType.(*v1.Upstream_Consul)
 	if !ok {
 		return nil
 	}
 
 	// consul upstreams use EDS
-	xds.SetEdsOnCluster(out)
+	xds.SetEdsOnCluster(out, p.settings)
 
 	return nil
 }
 
+// make sure t1 is a subset of t2
 func matchTags(t1, t2 []string) bool {
-	if len(t1) != len(t2) {
+	if len(t1) > len(t2) {
 		return false
 	}
 	for _, tag1 := range t1 {
@@ -111,6 +161,23 @@ func matchTags(t1, t2 []string) bool {
 			}
 		}
 		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// make sure t1 and t2 are mutually exclusive
+func mutuallyExclusiveTags(t1, t2 []string) bool {
+	for _, tag1 := range t1 {
+		var found bool
+		for _, tag2 := range t2 {
+			if tag1 == tag2 {
+				found = true
+				break
+			}
+		}
+		if found {
 			return false
 		}
 	}

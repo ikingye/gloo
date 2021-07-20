@@ -9,6 +9,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/debug"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/demo"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/federation"
+	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/istio"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/plugin"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/constants"
 	"k8s.io/kubernetes/pkg/kubectl/cmd"
@@ -19,6 +20,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/del"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/edit"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/get"
+	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/initpluginmanager"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/install"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/remove"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/route"
@@ -110,6 +112,8 @@ func GlooCli() *cobra.Command {
 			dashboard.RootCmd(opts),
 			federation.RootCmd(opts),
 			plugin.RootCmd(opts),
+			istio.RootCmd(opts),
+			initpluginmanager.Command(context.Background()),
 			completionCmd(),
 		)
 	}

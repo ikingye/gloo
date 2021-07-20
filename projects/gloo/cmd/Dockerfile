@@ -9,6 +9,7 @@ RUN apk upgrade --update-cache \
     && rm -rf /var/cache/apk/*
 
 COPY gloo-linux-$GOARCH /usr/local/bin/gloo
-COPY third_party_licenses.txt /etc/third_party_licenses.txt
+
+USER 10101
 
 ENTRYPOINT ["/usr/local/bin/gloo"]

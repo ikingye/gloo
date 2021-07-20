@@ -20,9 +20,10 @@ import (
 const GatewayProxyName = defaults.GatewayProxyName
 
 type ListenerFactory interface {
-	GenerateListeners(ctx context.Context, snap *v1.ApiSnapshot, filteredGateways []*v1.Gateway, reports reporter.ResourceReports) []*gloov1.Listener
+	GenerateListeners(ctx context.Context, proxyName string, snap *v1.ApiSnapshot, filteredGateways []*v1.Gateway, reports reporter.ResourceReports) []*gloov1.Listener
 }
 
+//go:generate mockgen -destination mocks/mock_translator.go -package mocks github.com/solo-io/gloo/projects/gateway/pkg/translator Translator
 type Translator interface {
 	Translate(ctx context.Context, proxyName, namespace string, snap *v1.ApiSnapshot, filteredGateways v1.GatewayList) (*gloov1.Proxy, reporter.ResourceReports)
 }
@@ -40,7 +41,12 @@ func NewTranslator(factories []ListenerFactory, opts Opts) *translator {
 }
 
 func NewDefaultTranslator(opts Opts) *translator {
-	return NewTranslator([]ListenerFactory{&HttpTranslator{}, &TcpTranslator{}}, opts)
+	warnOnRouteShortCircuiting := false
+	if opts.Validation != nil {
+		warnOnRouteShortCircuiting = opts.Validation.WarnOnRouteShortCircuiting
+	}
+
+	return NewTranslator([]ListenerFactory{&HttpTranslator{WarnOnRouteShortCircuiting: warnOnRouteShortCircuiting}, &TcpTranslator{}}, opts)
 }
 
 func (t *translator) Translate(ctx context.Context, proxyName, namespace string, snap *v1.ApiSnapshot, gatewaysByProxy v1.GatewayList) (*gloov1.Proxy, reporter.ResourceReports) {
@@ -60,13 +66,13 @@ func (t *translator) Translate(ctx context.Context, proxyName, namespace string,
 	validateGateways(filteredGateways, snap.VirtualServices, reports)
 	listeners := make([]*gloov1.Listener, 0, len(filteredGateways))
 	for _, listenerFactory := range t.listenerTypes {
-		listeners = append(listeners, listenerFactory.GenerateListeners(ctx, snap, filteredGateways, reports)...)
+		listeners = append(listeners, listenerFactory.GenerateListeners(ctx, proxyName, snap, filteredGateways, reports)...)
 	}
 	if len(listeners) == 0 {
 		return nil, reports
 	}
 	return &gloov1.Proxy{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      proxyName,
 			Namespace: namespace,
 		},
@@ -81,6 +87,7 @@ func makeListener(gateway *v1.Gateway) *gloov1.Listener {
 		BindPort:      gateway.BindPort,
 		Options:       gateway.Options,
 		UseProxyProto: gateway.UseProxyProto,
+		RouteOptions:  gateway.RouteOptions,
 	}
 }
 

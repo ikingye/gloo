@@ -1,4 +1,4 @@
-FROM alpine:3.11.3
+FROM alpine:3.13.5
 
 ARG GOARCH=amd64
 
@@ -8,5 +8,7 @@ RUN apk upgrade --update-cache \
     && rm -rf /var/cache/apk/*
 
 COPY discovery-linux-$GOARCH /usr/local/bin/discovery
+
+USER 10101
 
 ENTRYPOINT ["/usr/local/bin/discovery"]

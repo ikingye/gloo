@@ -1,10 +1,11 @@
+{{- define "ingressProxy.serviceSpec" }}
 {{- if .Values.ingress.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
   labels:
     app: gloo
-    gloo: ingress-proxy
+    gloo: {{ .Values.ingressProxy.label }}
   name: ingress-proxy
   namespace: {{ .Release.Namespace }}
 {{- if .Values.ingressProxy.service }}
@@ -17,10 +18,12 @@ metadata:
 {{- end }}
 spec:
   ports:
-  - port: {{ .Values.ingressProxy.deployment.httpPort }}
+  - port: {{ .Values.ingressProxy.service.httpPort }}
+    targetPort: {{ .Values.ingressProxy.deployment.httpPort }}
     protocol: TCP
     name: http
-  - port: {{ .Values.ingressProxy.deployment.httpsPort }}
+  - port: {{ .Values.ingressProxy.service.httpsPort }}
+    targetPort: {{ .Values.ingressProxy.deployment.httpsPort }}
     protocol: TCP
     name: https
   selector:
@@ -29,4 +32,14 @@ spec:
   {{- if and (eq .Values.ingressProxy.service.type "LoadBalancer") .Values.ingressProxy.service.loadBalancerIP }}
   loadBalancerIP: {{ .Values.ingressProxy.service.loadBalancerIP }}
   {{- end }}
-{{- end }}
+{{- end }} {{/* if .Values.ingress.enabled */}}
+{{- end }} {{/* define ingressProxy.serviceSpec */}}
+
+{{/* Render template with yaml overrides */}}
+{{- $kubeResourceOverride := dict -}}
+{{- if .Values.ingressProxy -}}
+{{- if .Values.ingressProxy.service -}}
+{{- $kubeResourceOverride = .Values.ingressProxy.service.kubeResourceOverride  -}}
+{{- end -}}
+{{- end -}}
+{{- include "gloo.util.merge" (list . $kubeResourceOverride "ingressProxy.serviceSpec") -}}

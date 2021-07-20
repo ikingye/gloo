@@ -10,10 +10,10 @@ like setting up a domain and SSL certificates.
 
 ## Setup
 {{% notice warning %}}
-This feature requires Gloo's external auth server to communicate with an external OIDC provider/authorization server.
+This feature requires Gloo Edge's external auth server to communicate with an external OIDC provider/authorization server.
 Because of this interaction, the OIDC flow may take longer than the default timeout of 200ms.
 You can increase this timeout by setting the {{% protobuf name="enterprise.gloo.solo.io.Settings" display="`requestTimeout` value on external auth settings"%}}.
-The external auth settings can be configured on the {{% protobuf name="gloo.solo.io.Settings" display="global Gloo `Settings` object"%}}.
+The external auth settings can be configured on the {{% protobuf name="gloo.solo.io.Settings" display="global Gloo Edge `Settings` object"%}}.
 {{% /notice %}}
 
 {{< readfile file="/static/content/setup_notes" markdown="true">}}
@@ -31,17 +31,17 @@ minikube start --docker-opt="default-ulimit=nofile=102400:102400"
 
 Let's deploy a sample web application that we will use to demonstrate these features:
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/solo-io/gloo/v0.8.4/example/petclinic/petclinic.yaml
+kubectl apply -f https://raw.githubusercontent.com/solo-io/gloo/v1.2.9/example/petstore/petstore.yaml
 ```
 
 ### Creating a Virtual Service
-Now we can create a Virtual Service that routes all requests (note the `/` prefix) to the `petclinic` service.
+Now we can create a Virtual Service that routes all requests (note the `/all-pets` prefix) to the `petstore` service.
 
 ```yaml
 apiVersion: gateway.solo.io/v1
 kind: VirtualService
 metadata:
-  name: petclinic
+  name: default
   namespace: gloo-system
 spec:
   virtualHost:
@@ -49,47 +49,49 @@ spec:
     - '*'
     routes:
     - matchers:
-      - prefix: /
+      - exact: /all-pets
+      options:
+        prefixRewrite: /api/pets
       routeAction:
         single:
-          kube:
-            ref:
-              name: petclinic
-              namespace: default
-            port: 80
+          upstream:
+            name: default-petstore-8080
+            namespace: gloo-system
 ```
 
-To verify that the Virtual Service has been accepted by Gloo, let's port-forward the Gateway Proxy service so that it is 
+To verify that the Virtual Service has been accepted by Gloo Edge, let's port-forward the Gateway Proxy service so that it is 
 reachable from you machine at `localhost:8080`:
 ```
 kubectl -n gloo-system port-forward svc/gateway-proxy 8080:80
 ```
 
-If you open your browser and navigate to [http://localhost:8080](http://localhost:8080) you should see the following page (you might need to wait a 
-minute for the containers to start):
+If you open your browser and navigate to [http://localhost:8080/all-pets](http://localhost:8080/all-pets) you should
+see the following text (you might need to wait a minute for the containers to start):
 
-![Pet Clinic app homepage](./../petclinic-home.png)
+```
+[{"id":1,"name":"Dog","status":"available"},{"id":2,"name":"Cat","status":"pending"}]
+```
 
 ## Securing the Virtual Service
-As we just saw, we were able to reach our application without having to provide any credentials. This is because by 
-default Gloo allows any request on routes that do not specify authentication configuration. Let's change this behavior. 
-We will update the Virtual Service so that each request to the sample application is authenticated using an 
-**OpenID Connect** flow.
+As we just saw, we were able to reach our application without having to provide any credentials. This is because by default Gloo Edge allows any request on routes that do not specify authentication configuration. Let's change this behavior. We will update the Virtual Service so that each request to the sample application is authenticated using an **OpenID Connect** flow.
 
 ### Register your application with Google
 In order to use Google as our identity provider, we need to register our application with the Google API.
 To do so:
  
-- log in to the [Google Developer Console](https://console.developers.google.com/);
-- if this is the first time using the console, create a [project](https://cloud.google.com/resource-manager/docs/creating-managing-projects)
+- Log in to the [Google Developer Console](https://console.developers.google.com/)
+- If this is the first time using the console, create a [project](https://cloud.google.com/resource-manager/docs/creating-managing-projects)
 as prompted;
-- navigate to the [OAuth consent screen](https://console.developers.google.com/apis/credentials/consent) menu item;
-- input a name for your application in the **Application name** text field;
-- click `Save`;
-- navigate to the [Credentials](https://console.developers.google.com/apis/credentials) menu item;
-- click `Create credentials`, and then `OAuth client ID`;
-- on the next page, select `Other` as the type of the client (as we are only going to use it for demonstration purposes), 
-- choose a name and click `Create`.
+- Navigate to the [OAuth consent screen](https://console.developers.google.com/apis/credentials/consent) menu item
+- Input a name for your application in the *Application name* text field and select **Internal** as the *Application type*
+- Click **Save**;
+- Navigate to the [Credentials](https://console.developers.google.com/apis/credentials) menu item
+- click **Create credentials**, and then **OAuth client ID**
+- On the next page, select *Web Application* as the type of the client (as we are only going to use it for demonstration purposes), 
+- Enter a name for the OAuth client ID or accept the default value
+- Under *Authorized redirect URIs* click on **Add URI**
+- Enter the URI: `http://localhost:8080/callback`
+- Click **Create**
 
 You will be presented with the **client id** and **client secret** for your application.
 Let's store them in two environment variables:
@@ -100,8 +102,7 @@ CLIENT_SECRET=<your client secret>
 ```
 
 ### Create a client ID secret
-Gloo expects the client secret to stored in a Kubernetes secret. Let's create the secret with the value of our 
-`CLIENT_SECRET` variable:
+Gloo Edge expects the client secret to stored in a Kubernetes secret. Let's create the secret with the value of our `CLIENT_SECRET` variable:
 
 ```shell
 glooctl create secret oauth --namespace gloo-system --name google --client-secret $CLIENT_SECRET
@@ -114,7 +115,7 @@ glooctl create secret oauth --namespace gloo-system --name google --client-secre
 
 Now let's create the `AuthConfig` resource that we will use to secure our Virtual Service.
 
-{{< highlight shell "hl_lines=9-16" >}}
+```shell
 kubectl apply -f - <<EOF
 apiVersion: enterprise.gloo.solo.io/v1
 kind: AuthConfig
@@ -123,27 +124,38 @@ metadata:
   namespace: gloo-system
 spec:
   configs:
-  - oauth:
-      app_url: http://localhost:8080
-      callback_path: /callback
-      client_id: $CLIENT_ID
-      client_secret_ref:
-        name: google
-        namespace: gloo-system
-      issuer_url: https://accounts.google.com
+  - oauth2:
+      oidcAuthorizationCode:
+        app_url: http://localhost:8080
+        callback_path: /callback
+        client_id: $CLIENT_ID
+        client_secret_ref:
+          name: google
+          namespace: gloo-system
+        issuer_url: https://accounts.google.com
+        session:
+          cookieOptions:
+            notSecure: true
+        scopes:
+        - email
 EOF
-{{< /highlight >}}
+```
 
-Notice how we set the `CLIENT_ID` and reference the client secret we just created.
+{{% notice note %}}
+The above configuration uses the new `oauth2` syntax. The older `oauth` syntax is still supported, but has been deprecated.
+Note this example explicitly allows insecure cookies (`session.cookieOptions.notSecure`), so that it works in this guide using localhost. In a live hosted environment secured with TLS, you should not set this.
+{{% /notice %}}
+
+Notice how we set the `CLIENT_ID` and reference the client secret we just created. The `callback_path` matches the authorized redirect URI we added for the OAuth Client ID. Redirecting to an unauthorized URI would result in an error from the Google authentication flow.
 
 ### Update the Virtual Service
 Once the AuthConfig has been created, we can use it to secure our Virtual Service:
 
-{{< highlight yaml "hl_lines=20-24" >}}
+{{< highlight yaml "hl_lines=11-19 29-33" >}}
 apiVersion: gateway.solo.io/v1
 kind: VirtualService
 metadata:
-  name: petclinic
+  name: default
   namespace: gloo-system
 spec:
   virtualHost:
@@ -151,14 +163,23 @@ spec:
     - '*'
     routes:
     - matchers:
-      - prefix: /
+      - prefix: /callback
+      options:
+        prefixRewrite: '/login'
       routeAction:
         single:
-          kube:
-            ref:
-              name: petclinic
-              namespace: default
-            port: 80
+          upstream:
+            name: default-petstore-8080
+            namespace: gloo-system
+    - matchers:
+      - exact: /all-pets
+      options:
+        prefixRewrite: /api/pets
+      routeAction:
+        single:
+          upstream:
+            name: default-petstore-8080
+            namespace: gloo-system
     options:
       extauth:
         configRef:
@@ -167,31 +188,30 @@ spec:
 {{< /highlight >}}
 
 {{% notice note %}}
-Note this is a simplistic example that has a `/` catch-all path prefix route. Gloo needs to handle the `/callback` route and does so in the External Auth service. If you don't have a matching route (ie, either using a `/` or `/callback`) for the `callback` setting, you'll see `404`s when the Identity Provider tries to callback to Gloo with the correct tokens. Please reach out to us on the [Slack](https://slack.solo.io) if you run into trouble here.
+This example is sending the `/callback` prefix to `/login`, a path that does not exist. The request will not be interpreted by the petstore service, but you could easily add code for the `/login` path that would parse the state information from Google and use it to load a profile of the user.
 {{% /notice %}}
 
 ## Testing our configuration
-Since we didn't register any URL, Google will only allow authentication with applications running on localhost for 
-security reasons. We can make the Gloo Gateway available on localhost using `kubectl port-forward`:
+Since we didn't register an external URL, Google will only allow authentication with applications running on localhost for security reasons. We can make the Gloo Edge proxy available on localhost using `kubectl port-forward`:
 
 ```shell
 kubectl port-forward -n gloo-system deploy/gateway-proxy 8080 &
 portForwardPid=$! # Store the port-forward pid so we can kill the process later
 ```
 
-Now if you open your browser and go to http://localhost:8080 you should be redirected to the Google login screen:
+Now if you open your browser and go to [http://localhost:8080/all-pets](http://localhost:8080/all-pets) you should be redirected to the Google login screen:
 
 ![Google login page](google-login.png)
  
-If you provide your Google credentials, Gloo should redirect you to the main page of our sample application!
+If you provide your Google credentials, Gloo Edge should redirect you to the `/callback` page, with the information from Google added as a query string.
 
-![Pet Clinic app homepage](./../petclinic-home.png)
+![Pet Clinic app homepage](petclinic-querystring.jpeg)
 
 If this does not work, one thing to check is the `requestTimeout` setting on your `extauth` Settings. See the warning in the [setup section](#setup) for more details.
 
 ### Logging
 
-If Gloo is running on kubernetes, the extauth server logs can be viewed with:
+If Gloo Edge is running on kubernetes, the extauth server logs can be viewed with:
 ```
 kubectl logs -n gloo-system deploy/extauth -f
 ```
@@ -205,8 +225,8 @@ To clean up the resources we created during this tutorial you can run the follow
 
 ```bash
 kill $portForwardPid
-kubectl delete virtualservice -n gloo-system petclinic
+kubectl delete virtualservice -n gloo-system default
 kubectl delete authconfig -n gloo-system google-oidc
 kubectl delete secret -n gloo-system google
-kubectl delete -f https://raw.githubusercontent.com/solo-io/gloo/v0.8.4/example/petclinic/petclinic.yaml
+kubectl delete -f https://raw.githubusercontent.com/solo-io/gloo/v1.2.9/example/petstore/petstore.yaml
 ```

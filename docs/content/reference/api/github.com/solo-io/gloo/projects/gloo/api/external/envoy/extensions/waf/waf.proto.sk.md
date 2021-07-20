@@ -38,10 +38,10 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `action` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging.AuditLogAction](../waf.proto.sk/#auditlogaction) |  |  |
-| `location` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging.AuditLogLocation](../waf.proto.sk/#auditloglocation) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `action` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging.AuditLogAction](../waf.proto.sk/#auditlogaction) |  |
+| `location` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging.AuditLogLocation](../waf.proto.sk/#auditloglocation) |  |
 
 
 
@@ -83,17 +83,21 @@ weight: 5
 "ruleSets": []envoy.config.filter.http.modsecurity.v2.RuleSet
 "customInterventionMessage": string
 "auditLogging": .envoy.config.filter.http.modsecurity.v2.AuditLogging
+"requestHeadersOnly": bool
+"responseHeadersOnly": bool
 "regressionLogs": bool
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `disabled` | `bool` | Disable all rules on the current route. |  |
-| `ruleSets` | [[]envoy.config.filter.http.modsecurity.v2.RuleSet](../waf.proto.sk/#ruleset) | Global rule sets for the current http connection manager. |  |
-| `customInterventionMessage` | `string` | Custom message to display when an intervention occurs. |  |
-| `auditLogging` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging](../waf.proto.sk/#auditlogging) | This instructs the filter what to do with the transaction's audit log. |  |
-| `regressionLogs` | `bool` | log in a format suited for the OWASP regression tests. this format is a multiline log format, so it is disabled for regular use. do not enable this in production!. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `disabled` | `bool` | Disable all rules on the current route. |
+| `ruleSets` | [[]envoy.config.filter.http.modsecurity.v2.RuleSet](../waf.proto.sk/#ruleset) | Global rule sets for the current http connection manager. |
+| `customInterventionMessage` | `string` | Custom message to display when an intervention occurs. |
+| `auditLogging` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging](../waf.proto.sk/#auditlogging) | This instructs the filter what to do with the transaction's audit log. |
+| `requestHeadersOnly` | `bool` | If set, the body will not be buffered and fed to ModSecurity. Only the headers will. This can help improve performance. |
+| `responseHeadersOnly` | `bool` |  |
+| `regressionLogs` | `bool` | log in a format suited for the OWASP regression tests. this format is a multiline log format, so it is disabled for regular use. do not enable this in production!. |
 
 
 
@@ -110,11 +114,11 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `ruleStr` | `string` | String of rules which are added directly. |  |
-| `files` | `[]string` | Array of files to include. |  |
-| `directory` | `string` | A directory to include. all *.conf files in this directory will be included. sub directories will NOT be checked. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `ruleStr` | `string` | String of rules which are added directly. |
+| `files` | `[]string` | Array of files to include. |
+| `directory` | `string` | A directory to include. all *.conf files in this directory will be included. sub directories will NOT be checked. |
 
 
 
@@ -129,15 +133,19 @@ weight: 5
 "ruleSets": []envoy.config.filter.http.modsecurity.v2.RuleSet
 "customInterventionMessage": string
 "auditLogging": .envoy.config.filter.http.modsecurity.v2.AuditLogging
+"requestHeadersOnly": bool
+"responseHeadersOnly": bool
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `disabled` | `bool` | Disable all rules on the current route. |  |
-| `ruleSets` | [[]envoy.config.filter.http.modsecurity.v2.RuleSet](../waf.proto.sk/#ruleset) | Overwrite the global rules on this route. |  |
-| `customInterventionMessage` | `string` | Custom message to display when an intervention occurs. |  |
-| `auditLogging` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging](../waf.proto.sk/#auditlogging) | This instructs the filter what to do with the transaction's audit log. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `disabled` | `bool` | Disable all rules on the current route. |
+| `ruleSets` | [[]envoy.config.filter.http.modsecurity.v2.RuleSet](../waf.proto.sk/#ruleset) | Overwrite the global rules on this route. |
+| `customInterventionMessage` | `string` | Custom message to display when an intervention occurs. |
+| `auditLogging` | [.envoy.config.filter.http.modsecurity.v2.AuditLogging](../waf.proto.sk/#auditlogging) | This instructs the filter what to do with the transaction's audit log. |
+| `requestHeadersOnly` | `bool` | If set, the body will not be buffered and fed to ModSecurity. Only the headers will. This can help improve performance. |
+| `responseHeadersOnly` | `bool` |  |
 
 
 

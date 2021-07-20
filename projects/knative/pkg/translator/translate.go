@@ -8,8 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang/protobuf/ptypes"
+	envoycore_sk "github.com/solo-io/solo-kit/pkg/api/external/envoy/api/v2/core"
+
+	"knative.dev/networking/pkg/apis/networking"
 	"knative.dev/pkg/network"
-	"knative.dev/serving/pkg/apis/networking"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
 	v1 "k8s.io/api/core/v1"
@@ -25,7 +28,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/retries"
 	"github.com/solo-io/go-utils/log"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
-	knativev1alpha1 "knative.dev/serving/pkg/apis/networking/v1alpha1"
+	knativev1alpha1 "knative.dev/networking/pkg/apis/networking/v1alpha1"
 )
 
 const (
@@ -34,8 +37,8 @@ const (
 )
 
 const (
-	bindPortHttp  = 80
-	bindPortHttps = 443
+	bindPortHttp  = 8080
+	bindPortHttps = 8443
 
 	// a comma-separated list of sni domains
 	sslAnnotationKeySniDomains = "gloo.networking.knative.dev/ssl.sni_domains"
@@ -76,7 +79,7 @@ func translateProxy(ctx context.Context, proxyName, proxyNamespace string, ingre
 	ingressSpecsByRef := make(map[*core.Metadata]knativev1alpha1.IngressSpec)
 	for _, ing := range ingresses {
 		meta := ing.GetMetadata()
-		ingressSpecsByRef[&meta] = ing.Spec
+		ingressSpecsByRef[meta] = ing.Spec
 	}
 	return TranslateProxyFromSpecs(ctx, proxyName, proxyNamespace, ingressSpecsByRef)
 }
@@ -114,7 +117,7 @@ func TranslateProxyFromSpecs(ctx context.Context, proxyName, proxyNamespace stri
 		})
 	}
 	return &gloov1.Proxy{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      proxyName, // must match envoy role
 			Namespace: proxyNamespace,
 		},
@@ -130,12 +133,13 @@ func routingConfig(ctx context.Context, ingresses map[*core.Metadata]knativev1al
 
 		for _, tls := range spec.TLS {
 
-			if tls.ServerCertificate != "" && tls.ServerCertificate != v1.TLSCertKey {
+			// todo (mholland) use non-peprecated solutions now that we're using k8s 18.
+			if tls.DeprecatedServerCertificate != "" && tls.DeprecatedServerCertificate != v1.TLSCertKey {
 				contextutils.LoggerFrom(ctx).Warn("Custom ServerCertificate filenames are not currently supported by Gloo")
 				continue
 			}
 
-			if tls.PrivateKey != "" && tls.PrivateKey != v1.TLSPrivateKeyKey {
+			if tls.DeprecatedPrivateKey != "" && tls.DeprecatedPrivateKey != v1.TLSPrivateKeyKey {
 				contextutils.LoggerFrom(ctx).Warn("Custom PrivateKey filenames are not currently supported by Gloo")
 				continue
 			}
@@ -179,19 +183,19 @@ func routingConfig(ctx context.Context, ingresses map[*core.Metadata]knativev1al
 					pathRegex = ".*"
 				}
 
-				var timeout *time.Duration
-				if route.Timeout != nil {
-					timeout = &route.Timeout.Duration
+				var timeout time.Duration
+				if route.DeprecatedTimeout != nil {
+					timeout = route.DeprecatedTimeout.Duration
 				}
 				var retryPolicy *retries.RetryPolicy
-				if route.Retries != nil {
-					var perTryTimeout *time.Duration
-					if route.Retries.PerTryTimeout != nil {
-						perTryTimeout = &route.Retries.PerTryTimeout.Duration
+				if route.DeprecatedRetries != nil {
+					var perTryTimeout time.Duration
+					if route.DeprecatedRetries.PerTryTimeout != nil {
+						perTryTimeout = route.DeprecatedRetries.PerTryTimeout.Duration
 					}
 					retryPolicy = &retries.RetryPolicy{
-						NumRetries:    uint32(route.Retries.Attempts),
-						PerTryTimeout: perTryTimeout,
+						NumRetries:    uint32(route.DeprecatedRetries.Attempts),
+						PerTryTimeout: ptypes.DurationProto(perTryTimeout),
 					}
 				}
 
@@ -211,7 +215,7 @@ func routingConfig(ctx context.Context, ingresses map[*core.Metadata]knativev1al
 					},
 					Options: &gloov1.RouteOptions{
 						HeaderManipulation: getHeaderManipulation(route.AppendHeaders),
-						Timeout:            timeout,
+						Timeout:            ptypes.DurationProto(timeout),
 						Retries:            retryPolicy,
 					},
 				}
@@ -290,7 +294,7 @@ func routeActionFromSplits(splits []knativev1alpha1.IngressBackendSplit) (*gloov
 func serviceForSplit(split knativev1alpha1.IngressBackendSplit) *gloov1.Destination_Kube {
 	return &gloov1.Destination_Kube{
 		Kube: &gloov1.KubernetesServiceDestination{
-			Ref:  core.ResourceRef{Name: split.ServiceName, Namespace: split.ServiceNamespace},
+			Ref:  &core.ResourceRef{Name: split.ServiceName, Namespace: split.ServiceNamespace},
 			Port: uint32(split.ServicePort.IntValue()),
 		},
 	}
@@ -300,9 +304,9 @@ func getHeaderManipulation(headersToAppend map[string]string) *headers.HeaderMan
 	if len(headersToAppend) == 0 {
 		return nil
 	}
-	var headersToAdd []*headers.HeaderValueOption
+	var headersToAdd []*envoycore_sk.HeaderValueOption
 	for name, value := range headersToAppend {
-		headersToAdd = append(headersToAdd, &headers.HeaderValueOption{Header: &headers.HeaderValue{Key: name, Value: value}})
+		headersToAdd = append(headersToAdd, &envoycore_sk.HeaderValueOption{HeaderOption: &envoycore_sk.HeaderValueOption_Header{Header: &envoycore_sk.HeaderValue{Key: name, Value: value}}})
 	}
 	return &headers.HeaderManipulation{
 		RequestHeadersToAdd: headersToAdd,

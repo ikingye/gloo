@@ -2,13 +2,11 @@ namespace:
   create: false
 k8s:
   clusterName: cluster.local
-# We need this for backwards-compatibility with Helm 2
-crds:
-  create: false
 settings:
   # if this is set to false, default settings will be created by pods upon boot
   create: true
   linkerd: false
+  enableRestEds: false
   aws: {}
   invalidConfigPolicy:
     replaceInvalidRoutes: false
@@ -22,12 +20,14 @@ settings:
         loopBackAddress: 127.0.0.1
         image:
           repository: gloo-envoy-wrapper
-        httpPort: 80
-        httpsPort: 443
+        httpPort: 8080
+        httpsPort: 8443
         replicas: 1
         service:
           type: LoadBalancer
           extraAnnotations: {}
+          httpPort: 80
+          httpsPort: 443
   # Namespaces that Gloo should watch. This includes watches set for pods, services, as well as CRD configuration objects.
   watchNamespaces: []
   # Gloo allows you to directly reference a Kubernetes service as a routing destination. To enable this feature,
@@ -39,8 +39,6 @@ settings:
   # If false (default), Gloo will propagate the state of the Proxy to Envoy, resetting the listener to a clean slate with no routes.
   # If true, Gloo will keep serving the routes from the last applied valid configuration.
   disableProxyGarbageCollection: false
-  # Set this value to a an array of ratelimit descriptors to have rate limits on the gloo instance's installation namespace.
-  # For more info, see https://docs.solo.io/gloo/latest/reference/api/github.com/solo-io/gloo/projects/gloo/api/v1/enterprise/options/ratelimit/ratelimit.proto.sk/#servicesettings
 gloo:
   deployment:
     image:
@@ -60,6 +58,7 @@ discovery:
       repository: discovery
     replicas: 1
     runAsUser: 10101
+    enablePodSecurityContext: true
     fsGroup: 10101
 gateway:
   enabled: true
@@ -70,8 +69,12 @@ gateway:
     secretName: gateway-validation-certs
     alwaysAcceptResources: true
     allowWarnings: true
+    disableTransformationValidation: false
+    warnRouteShortCircuiting: false
     webhook:
       enabled: true
+      disableHelmHook: false
+      extraAnnotations: {}
   deployment:
     image:
       repository: gateway
@@ -89,7 +92,9 @@ gateway:
   serviceAccount: {}
 gatewayProxies:
   gatewayProxy:
-    gatewaySettings: {}
+    envoyApiVersion: V3
+    gatewaySettings:
+      useProxyProto: false
     failover:
       enabled: false
       port: 15443
@@ -104,6 +109,7 @@ gatewayProxies:
       httpPort: 8080
       httpsPort: 8443
       runAsUser: 10101
+      enablePodSecurityContext: true
       fsGroup: 10101
       runUnprivileged: true
       disableNetBind: true
@@ -125,6 +131,7 @@ gatewayProxies:
       data:
     loopBackAddress: 127.0.0.1
     globalDownstreamMaxConnections: 250000
+    healthyPanicThreshold: 50
 accessLogger:
   enabled: false
   port: 8083
@@ -143,16 +150,20 @@ ingress:
     replicas: 1
     runAsUser: 10101
 ingressProxy:
+  # Set to a unique value to allow using several ingress proxy instances in the same cluster.
+  label: ingress-proxy
   loopBackAddress: 127.0.0.1
   deployment:
     image:
       repository: gloo-envoy-wrapper
-    httpPort: 80
-    httpsPort: 443
+    httpPort: 8080
+    httpsPort: 8443
     replicas: 1
   service:
     type: LoadBalancer
     extraAnnotations: {}
+    httpPort: 80
+    httpsPort: 443
   configMap:
     data:
   tracing:
@@ -160,10 +171,13 @@ global:
   image:
     registry: quay.io/solo-io
     pullPolicy: IfNotPresent
+    extended: false
   glooRbac:
     create: true
+    namespaced: false
   glooStats:
     enabled: true
+    routePrefixRewrite: /stats/prometheus
   glooMtls:
     enabled: false
     sds:
@@ -172,3 +186,12 @@ global:
     envoy:
       image:
         repository: gloo-envoy-wrapper
+  istioSDS:
+    enabled: false
+  istioIntegration:
+    labelInstallNamespace: false
+    whitelistDiscovery: false
+    disableAutoinjection: false
+  # AddEnterpriseSettings and extauthCustomYaml control differences in the settings manifest between open source and enterprise
+  AddEnterpriseSettings: false
+  extauthCustomYaml: true

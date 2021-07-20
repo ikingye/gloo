@@ -9,7 +9,6 @@ import (
 	kubev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	"github.com/solo-io/gloo/pkg/utils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
 
 	errors "github.com/rotisserie/eris"
@@ -73,7 +72,7 @@ func translateProxy(ctx context.Context, namespace string, snap *v1.TranslatorSn
 		listeners = append(listeners, &gloov1.Listener{
 			Name:        "http",
 			BindAddress: "::",
-			BindPort:    80,
+			BindPort:    8080,
 			ListenerType: &gloov1.Listener_HttpListener{
 				HttpListener: &gloov1.HttpListener{
 					VirtualHosts: virtualHostsHttp,
@@ -85,7 +84,7 @@ func translateProxy(ctx context.Context, namespace string, snap *v1.TranslatorSn
 		listeners = append(listeners, &gloov1.Listener{
 			Name:        "https",
 			BindAddress: "::",
-			BindPort:    443,
+			BindPort:    8443,
 			ListenerType: &gloov1.Listener_HttpListener{
 				HttpListener: &gloov1.HttpListener{
 					VirtualHosts: virtualHostsHttps,
@@ -95,7 +94,7 @@ func translateProxy(ctx context.Context, namespace string, snap *v1.TranslatorSn
 		})
 	}
 	return &gloov1.Proxy{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      "ingress-proxy", // must match envoy role
 			Namespace: namespace,
 		},
@@ -224,7 +223,7 @@ func virtualHosts(ctx context.Context, ingresses []*v1beta1.Ingress, upstreams g
 							Destination: &gloov1.RouteAction_Single{
 								Single: &gloov1.Destination{
 									DestinationType: &gloov1.Destination_Upstream{
-										Upstream: utils.ResourceRefPtr(upstream.Metadata.Ref()),
+										Upstream: upstream.Metadata.Ref(),
 									},
 								},
 							},
@@ -247,7 +246,7 @@ func virtualHosts(ctx context.Context, ingresses []*v1beta1.Ingress, upstreams g
 		glooutils.SortRoutesByPath(routes)
 		virtualHostsHttp = append(virtualHostsHttp, &gloov1.VirtualHost{
 			Name:    host + "-http",
-			Domains: []string{host, host + ":80"},
+			Domains: []string{host, host + ":8080"},
 			Routes:  routes,
 		})
 	}
@@ -262,7 +261,7 @@ func virtualHosts(ctx context.Context, ingresses []*v1beta1.Ingress, upstreams g
 		virtualHostsHttps = append(virtualHostsHttps, secureVirtualHost{
 			vh: &gloov1.VirtualHost{
 				Name:    host + "-https",
-				Domains: []string{host, host + ":443"},
+				Domains: []string{host, host + ":8443"},
 				Routes:  routes,
 			},
 			secret: *secret,
